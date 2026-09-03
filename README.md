@@ -2,77 +2,199 @@
 
 [![CI](https://github.com/jsdfhasuh/helmet_detect/actions/workflows/ci.yml/badge.svg)](https://github.com/jsdfhasuh/helmet_detect/actions/workflows/ci.yml)
 
-固定监控摄像头下的电动车／摩托车骑行人员安全头盔检测。项目重点解决远距离小目标、整图缩放后头部像素不足、单帧漏检，以及停放车辆和后视镜等背景干扰。
+面向固定监控视频的电动车／摩托车骑行人员安全头盔检测。V2 已从固定 ROI / Gate 重构为**全画面人员检测、目标跟踪、按人员动态裁剪、头盔状态判断和按轨迹投票**，人员不再必须经过某一组硬编码坐标。
 
-这不是只展示调用方式的空壳示例：GitHub Actions 会下载并校验公开权重、导出固定输入尺寸的 ONNX、运行真实模型推理，并用来自现场视频的隐私遮蔽帧完成图像和视频回归。未能检出预期的未戴头盔目标时，CI 会直接失败。
+## V2 使用的模型已经确定
 
-## 已验证结果
+默认生产验证链路使用两级模型：
 
-回归样本来自用户提供的 1920×1080 固定摄像头视频。仓库只保存一张缩放为 448×448 的隐私遮蔽帧，并以 Base64 文本形式保存：保留检测目标附近区域，其余位置使用纯色覆盖，不包含原视频、时间水印和摄像头名称。回归脚本会校验 SHA256 后还原 WebP，CI 再将该真实帧重复 9 次生成短视频，执行真实视频推理和时序投票。
+1. **场景模型：Ultralytics 官方 `yolo11n.pt`（COCO 预训练）**
+   - 在完整画面中检测 `person`、`bicycle`、`motorcycle`；
+   - 视频模式通过 **ByteTrack** 为人员分配稳定 ID；
+   - 默认输入尺寸为 1280，优先保证远距离人员召回；
+   - 它只负责“人在哪里”，不负责判断头盔。
+2. **头盔模型：`iam-tsr/yolov8n-helmet-detection`**
+   - 类别为 `With Helmet` / `Without Helmet`；
+   - 对每一个人员周围自动生成的多尺度上下文图单独推理；
+   - 默认输入尺寸为 960；
+   - 它负责“这个人的头部是否佩戴安全头盔”。
 
-当前固定环境基准结果：
+此前测试过的 `nnsohamnn/helmet-detection-yolo11`（YOLO11m）保留为可选对比模型，但没有放进 V2 默认链路：它在 CPU 上明显更慢，而且公开模型在普通帽子、背面和遮挡场景中仍会与轻量模型发生判断冲突。正式上线前，仍建议使用本机位标注数据微调最终的头盔模型。
 
-| 回归场景 | 期望 | 实际 | 未戴头盔最高置信度 |
-|---|---:|---:|---:|
-| 同一真实画面的空检测门区域 | 不报警 | 正确不报警 | 0.0000 |
-| 真实摄像头未戴头盔人员 | 报警 | 正确报警 | 约 0.2723 |
-| 由真实帧生成的 9 帧视频 | 至少 8 帧报警、至少 1 个事件 | 9 帧报警、1 个事件 | 约 0.2723 |
+## 为什么不是固定 ROI
 
-这些数值是本摄像头回归样本上的工程结果，不代表通用精度，也不能替代独立测试集评估。CI 固定 NumPy 2.3.5 和 OpenCV 4.13.0.92，以避免不同推理运行时造成阈值漂移。
-
-## 检测流程
+旧版流程为：
 
 ```text
-固定摄像头视频
-    ↓
-裁剪有效区域 ROI，避免把 1920×1080 整图缩小后丢失头部细节
-    ↓
-YOLOv8n 头盔模型（快速模式）
-或 YOLOv8n + YOLO11m 骑行头盔模型（融合配置）
-    ↓
-只保留检测门 gate 内的头部结果
-    ↓
-按模型独立配置；当前为 YOLOv8n 0.20、YOLO11m 0.10。
-- `window/min_hits`：时序投票参数，用于降低单帧误检。
-
-固定摄像头位置、焦距或分辨率变化后，必须重新测量 ROI 和 gate，不能直接照搬当前坐标。
-
-## 自动化验证
-
-`.github/workflows/ci.yml` 在每次 push、Pull Request 和手动触发时执行：
-
-1. Ruff 静态检查和 pytest 单元测试；
-2. 下载公开 YOLOv8n PT 权重并校验 SHA256；
-3. 导出 OpenCV DNN 可运行的固定 960×960 ONNX；
-4. 对检测门负样本规则和真实未戴头盔正样本执行模型推理；
-5. 检查实际报警状态、指定模型和最低置信度；
-6. 根据真实帧生成 9 帧无损 FFV1 AVI，并执行视频推理；
-7. 检查视频至少产生 8 个报警帧、1 个时序事件，且最高置信度至少为 0.20；
-8. 上传标注图片、标注视频、逐帧 JSONL、CSV 和报告作为 Actions Artifact。
-
-本地运行同一套回归：
-
-```bash
-pip install -e ".[runtime,dev]"
-python scripts/run_regression.py
+固定 ROI → 头盔模型 → 固定 Gate → 区域级报警
 ```
 
-`.github/workflows/manual-video.yml` 可在 Actions 页面手动运行：不填写 URL 时测试仓库样本；填写可直接下载的视频 URL 时处理指定视频。公共仓库的 Actions 与 Artifact 不适合上传敏感监控视频，涉及人员隐私时应使用私有仓库或在内网运行。
+它只能证明指定位置上的目标可识别，摄像头角度或人员路线变化后容易失效。
 
-## 模型来源
+V2 流程为：
 
-- `iam-tsr/yolov8n-helmet-detection`：YOLOv8n，权重中的类别为 `With Helmet / Without Helmet`。
-- `nnsohamnn/helmet-detection-yolo11`：YOLO11m，权重中的类别为 `With Helmet / Without Helmet`。
+```text
+完整视频帧
+    ↓
+YOLO11n 全画面寻找 person / bicycle / motorcycle
+    ↓
+ByteTrack 给每个人分配 ID
+    ↓
+根据每个人的位置和身高动态生成多尺度方形上下文图
+    ↓
+YOLOv8n 判断 With Helmet / Without Helmet
+    ↓
+只关联落在该人员头部候选区内的头盔结果
+    ↓
+按 track_id 独立进行多帧投票和报警去重
+```
 
-下载地址、文件摘要和许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。正式商业部署前，应重新核对模型、训练数据和 Ultralytics 的许可证要求。
+`alarm_zone` 仍可选配为归一化多边形，但它只限制**哪里允许报警**，不会限制模型只能看哪里。默认配置中 `alarm_zone` 为 `null`，表示全画面均可检测和报警。
 
-## 已知限制与生产化方向
+## 动态裁剪不是固定“人体顶部 30%”
 
-当前代码证明了该摄像头画面中的未戴头盔人员可以被模型检测出来，但公共模型不能直接视为生产验收模型：
+骑行人员会低头、弯腰、背对摄像头或被立杆遮挡，简单取人体框顶部固定比例并不稳定。V2 会根据：
 
-- 远距离头部只有约 20～35 像素，姿态、压缩和运动模糊会导致置信度波动；
-- 公共模型可能在普通帽子、遮挡和侧面场景上产生不同判断；
-- 当前时序投票以检测门区域为单位，尚未按人员 ID 分轨迹投票；
-- 多人同时通过时，应增加人员／骑行人员检测与 ByteTrack；
-- 建议从该摄像头标注 300～500 张困难样本，训练一套单模型生产权重；
-- 正式验收应按“人员事件”统计召回率、误报率和重复报警率，而不是只看单帧 mAP。
+- 当前人员框高度；
+- 当前画面宽高；
+- 多个上下文尺度；
+- 人员头部附近的中心区域；
+
+生成最多四个不同尺度的动态上下文图。头盔模型的检测框映射回原画面后，只有中心落在该人员头部候选区中的结果才参与该人员的状态判断，避免把旁边车辆上挂着的头盔错误关联给当前人员。
+
+## GitHub Actions 的真实验收
+
+`.github/workflows/ci.yml` 每次提交都会执行：
+
+1. Ruff 静态检查与 pytest 单元测试；
+2. 下载并校验官方 YOLO11n 和公共头盔模型的 SHA256；
+3. 将同一个隐私遮蔽后的真实现场目标放到 1280×720 画面的左、中、右三个不同位置；
+4. 分别执行真实 YOLO 推理，检查三个位置都能找到人员并判断为 `Without Helmet`；
+5. 生成连续视频，运行 ByteTrack 与按人员 ID 的时序投票；
+6. 要求产生稳定人员轨迹和至少一个未戴头盔事件；
+7. 上传标注图片、标注视频、逐帧 JSONL、CSV 和报告。
+
+这个回归专门防止代码退回到“只有目标落在固定 ROI 才能通过”的实现。仓库不保存原始监控视频，只保存去除摄像头名称、时间水印并遮蔽无关背景后的远距离目标片段，运行时会先校验 SHA256。
+
+## 本地安装
+
+推荐 Python 3.10～3.12：
+
+```bash
+git clone https://github.com/jsdfhasuh/helmet_detect.git
+cd helmet_detect
+python -m venv .venv
+```
+
+Windows PowerShell：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[dynamic,dev]"
+```
+
+下载并校验默认模型：
+
+```powershell
+python scripts\prepare_dynamic_models.py
+```
+
+将生成：
+
+```text
+models/yolo11n.pt
+models/helmet_yolov8n.pt
+models/dynamic_model_sources.json
+models/DYNAMIC_SHA256SUMS.txt
+```
+
+运行和 GitHub Actions 相同的动态回归：
+
+```powershell
+python scripts\run_dynamic_regression.py
+```
+
+成功时应看到：
+
+```text
+Dynamic V2 helmet regression
+Result: PASS
+```
+
+结果位于：
+
+```text
+artifacts/dynamic-regression/
+```
+
+## 检测自己的视频
+
+```powershell
+helmet-detect video `
+  --config .\configs\dynamic_full_frame.json `
+  --source "D:\videos\camera.mp4" `
+  --output .\artifacts\my-video\annotated.mp4 `
+  --records .\artifacts\my-video\frames.jsonl `
+  --summary .\artifacts\my-video\summary.json `
+  --sample-fps 5 `
+  --show-contexts
+```
+
+不需要查看动态裁剪框时，删除 `--show-contexts`。要把“完全没有形成报警事件”视为命令失败，可增加：
+
+```text
+--fail-on-no-alarm
+```
+
+单张图片：
+
+```powershell
+helmet-detect image `
+  --config .\configs\dynamic_full_frame.json `
+  --source .\test.jpg `
+  --output .\artifacts\image\annotated.jpg `
+  --json .\artifacts\image\result.json `
+  --show-contexts
+```
+
+## 配置重点
+
+`configs/dynamic_full_frame.json` 中没有固定 ROI 或 Gate。常用参数：
+
+- `scene_model.image_size`：全画面人员检测分辨率，默认 1280；
+- `scene_model.minimum_person_height`：忽略过小、几乎不可辨识的人员；
+- `scene_model.device`：`auto`、`cpu`、`0` 等；
+- `association.require_vehicle`：是否要求人员必须与自行车／摩托车匹配；当前默认关闭，避免 COCO 对电动车漏检导致整条链路失效；
+- `helmet_model.context_height_multipliers`：按人员高度生成动态裁剪尺度；
+- `helmet_model.context_frame_scales`：按画面尺寸增加上下文尺度；
+- `helmet_model.no_helmet_threshold`：未戴头盔单次判断阈值；
+- `temporal.window`：每条人员轨迹保存的状态窗口；
+- `temporal.minimum_no_helmet_hits`：形成事件所需的未戴头盔命中次数；
+- `alarm_zone`：可选归一化报警多边形，`null` 表示全画面。
+
+更换摄像头时通常需要重新评估分辨率、最小人员高度、头盔阈值和上下文尺度，但不需要重新画一个固定矩形 ROI。
+
+## 手动 Actions 视频检测
+
+在 GitHub 的 **Actions → Manual dynamic video detection → Run workflow** 中，可以填写一个可直接下载的视频地址。工作流会使用 V2 全画面动态链路，并上传：
+
+```text
+annotated.mp4
+frames.jsonl
+summary.json
+事件截图目录
+```
+
+公共仓库的 Actions 日志和 Artifact 不适合处理敏感监控内容。涉及人员隐私的视频应在本地、内网或私有仓库中运行。
+
+## 当前限制
+
+- COCO 模型的 `motorcycle` 类并不等同于所有中国电动车，因此默认不会强制要求检测到车辆；
+- 第一阶段人员漏检时，第二阶段无法判断该人员头盔；
+- 远距离头部仅有二三十像素时，姿态、压缩、运动模糊仍会造成波动；
+- 公共头盔模型只能用于验证和冷启动，不能代替本机位独立验证；
+- 正式验收应以“人员轨迹事件”为单位统计召回率、误报率和重复报警率，而不是只查看单帧 mAP；
+- 建议从现场收集 300～500 张代表性困难样本，微调 `With Helmet / Without Helmet` 模型。
+
+模型来源、摘要和许可注意事项见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
