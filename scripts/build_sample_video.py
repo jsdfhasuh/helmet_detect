@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from helmet_detect.fixtures import load_manifest_and_materialize
 from helmet_detect.sample import build_video_from_images
