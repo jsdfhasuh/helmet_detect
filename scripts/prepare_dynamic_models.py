@@ -43,7 +43,10 @@ MODEL_SOURCES = {
         filename="helmet_yolov8n.pt",
         sha256="c8eb324e365cf4faeab491d9cc301535ec745171b55e8b1acadea62be5101a9d",
         role="Per-person With Helmet / Without Helmet detection",
-        license_note="The model card currently marks the repository MIT; verify training data rights.",
+        license_note=(
+            "The model card currently marks the repository MIT; "
+            "verify training data rights."
+        ),
     ),
     "rider_yolo11m_optional": ModelSource(
         key="rider_yolo11m_optional",
@@ -54,7 +57,10 @@ MODEL_SOURCES = {
         filename="rider_yolo11m.pt",
         sha256="5769c45395a73739cb35cf28ed16e5d0acc3a0c90e1fac588fdb8a7403b3a930",
         role="Optional comparison model; not enabled by the V2 default configuration",
-        license_note="The model card currently marks the repository MIT; verify training data rights.",
+        license_note=(
+            "The model card currently marks the repository MIT; "
+            "verify training data rights."
+        ),
     ),
 }
 DEFAULT_MODELS = ("scene_yolo11n", "helmet_yolov8n")
