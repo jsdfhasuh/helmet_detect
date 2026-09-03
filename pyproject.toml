@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "helmet-detect"
-version = "0.1.0"
-description = "Fixed-camera motorcycle/e-bike helmet detection with ROI, model fusion, and temporal voting"
+version = "0.2.0"
+description = "Dynamic full-frame rider tracking and per-person safety helmet detection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -19,6 +19,10 @@ dependencies = [
 [project.optional-dependencies]
 runtime = [
   "opencv-python-headless==4.13.0.92",
+]
+dynamic = [
+  "ultralytics==8.4.79",
+  "lap>=0.5.12",
 ]
 dev = [
   "pytest>=8,<9",

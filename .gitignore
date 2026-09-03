@@ -9,8 +9,11 @@ models/*.pt
 models/*.onnx
 models/*.tmp
 models/SHA256SUMS.txt
+models/model_sources.json
+models/DYNAMIC_SHA256SUMS.txt
+models/dynamic_model_sources.json
 *.avi
 *.log
 .DS_Store
-models/model_sources.json
 testdata/camera_exit/images/*.webp
+testdata/dynamic_camera/images/*.webp

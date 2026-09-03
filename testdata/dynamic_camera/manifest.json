@@ -1,0 +1,48 @@
+{
+  "description": "Privacy-masked real-camera no-helmet rider patch without timestamp or camera label.",
+  "fixtures": {
+    "images/target_patch.webp": {
+      "sha256": "b5dd10e85e5153785bb1c0c0a29f53d65756170ec69deab88ff6c9b938a1e2fd",
+      "base64_parts": [
+        "images/target_patch.webp.b64.part01",
+        "images/target_patch.webp.b64.part02",
+        "images/target_patch.webp.b64.part03",
+        "images/target_patch.webp.b64.part04"
+      ]
+    }
+  },
+  "canvas": {
+    "width": 1280,
+    "height": 720,
+    "patch_y": 100,
+    "background": 114
+  },
+  "image_cases": [
+    {
+      "id": "dynamic_left",
+      "patch_x": 40,
+      "minimum_person_confidence": 0.3,
+      "minimum_no_helmet_score": 0.2
+    },
+    {
+      "id": "dynamic_center",
+      "patch_x": 400,
+      "minimum_person_confidence": 0.3,
+      "minimum_no_helmet_score": 0.2
+    },
+    {
+      "id": "dynamic_right",
+      "patch_x": 760,
+      "minimum_person_confidence": 0.25,
+      "minimum_no_helmet_score": 0.2
+    }
+  ],
+  "video_case": {
+    "patch_x": 400,
+    "frames": 8,
+    "fps": 5.0,
+    "minimum_no_helmet_frames": 6,
+    "minimum_events": 1,
+    "minimum_maximum_score": 0.2
+  }
+}
