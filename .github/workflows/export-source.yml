@@ -1,0 +1,25 @@
+name: Export source snapshot
+
+on:
+  push:
+    branches: ["refactor/dynamic-v2"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload repository snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: helmet-detect-source
+          path: |
+            .
+            !.git/**
+          include-hidden-files: true
+          retention-days: 1
+          compression-level: 6
