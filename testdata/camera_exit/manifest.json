@@ -1,0 +1,33 @@
+{
+  "description": "Privacy-masked frame from the user-provided fixed camera video.",
+  "image_cases": [
+    {
+      "id": "negative_gate_filter",
+      "image": "images/event_frame_6.webp",
+      "config": "../../configs/parking_exit_negative_gate.json",
+      "expected_alarm": false,
+      "max_score": 0.02
+    },
+    {
+      "id": "positive_real_camera_frame",
+      "image": "images/event_frame_6.webp",
+      "config": "../../configs/parking_exit_roi.json",
+      "expected_alarm": true,
+      "min_score": 0.20,
+      "required_model": "helmet_yolov8n",
+      "required_model_min_score": 0.20
+    }
+  ],
+  "video_case": {
+    "frames": [
+      "images/event_frame_6.webp"
+    ],
+    "fps": 6.0,
+    "repeat_each": 9,
+    "config": "../../configs/parking_exit_fast.json",
+    "sample_fps": 6.0,
+    "min_alarm_frames": 8,
+    "min_events": 1,
+    "min_score": 0.20
+  }
+}

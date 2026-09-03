@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helmet-detect-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install lightweight test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[runtime,dev]"
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Pytest
+        run: pytest
+
+  real-model-regression:
+    name: Real model regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Restore exported ONNX models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            models/*.onnx
+            models/model_sources.json
+            models/SHA256SUMS.txt
+          key: helmet-onnx-960-v8-v3-${{ hashFiles('scripts/prepare_models.py') }}
+
+      - name: Install export stack on cache miss
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[runtime,dev,export]"
+
+      - name: Download, verify and export public models
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: python scripts/prepare_models.py --models helmet_yolov8n
+
+      - name: Install runtime on cache hit
+        if: steps.model-cache.outputs.cache-hit == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[runtime,dev]"
+
+      - name: Verify expected model files exist
+        run: |
+          test -s models/helmet_yolov8n_960.onnx
+
+      - name: Run real image and video inference regression
+        run: python scripts/run_regression.py
+
+      - name: Publish regression summary
+        if: always()
+        run: |
+          if [ -f artifacts/regression/summary.md ]; then
+            cat artifacts/regression/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload visual evidence and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helmet-regression-${{ github.run_number }}
+          path: artifacts/regression/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6

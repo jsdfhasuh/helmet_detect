@@ -1,0 +1,132 @@
+name: Manual video detection
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct-download video URL. Leave blank to use the repository sample."
+        required: false
+        type: string
+      layout:
+        description: "Input layout"
+        required: true
+        default: sample-roi
+        type: choice
+        options:
+          - sample-roi
+          - full-frame-camera
+      model_mode:
+        description: "Model mode"
+        required: true
+        default: fast
+        type: choice
+        options:
+          - fast
+          - dual
+      sample_fps:
+        description: "Inference sampling FPS"
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Restore exported ONNX models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            models/*.onnx
+            models/model_sources.json
+            models/SHA256SUMS.txt
+          key: helmet-onnx-960-dual-v3-${{ hashFiles('scripts/prepare_models.py') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ "${{ steps.model-cache.outputs.cache-hit }}" = "true" ]; then
+            python -m pip install -e ".[runtime]"
+          else
+            python -m pip install -e ".[runtime,export]"
+          fi
+
+      - name: Prepare models on cache miss
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: python scripts/prepare_models.py
+
+      - name: Select or download input video
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+        run: |
+          mkdir -p artifacts/manual
+          if [ -n "$VIDEO_URL" ]; then
+            INPUT_VIDEO="artifacts/manual/input.mp4"
+            curl --fail --location --retry 5 --retry-all-errors \
+              "$VIDEO_URL" --output "$INPUT_VIDEO"
+          else
+            INPUT_VIDEO="artifacts/manual/input.avi"
+            python scripts/build_sample_video.py --output "$INPUT_VIDEO"
+          fi
+          test -s "$INPUT_VIDEO"
+          echo "INPUT_VIDEO=$INPUT_VIDEO" >> "$GITHUB_ENV"
+
+      - name: Run detector
+        shell: bash
+        run: |
+          if [ "${{ inputs.layout }}" = "full-frame-camera" ]; then
+            CONFIG="configs/parking_exit_full_frame.json"
+          else
+            CONFIG="configs/parking_exit_roi.json"
+          fi
+
+          if [ "${{ inputs.model_mode }}" = "fast" ]; then
+            MODELS="--models helmet_yolov8n"
+          else
+            MODELS=""
+          fi
+
+          helmet-detect video \
+            --config "$CONFIG" \
+            --source "$INPUT_VIDEO" \
+            --output artifacts/manual/annotated.mp4 \
+            --records artifacts/manual/frames.jsonl \
+            --summary artifacts/manual/summary.json \
+            --sample-fps "${{ inputs.sample_fps }}" \
+            $MODELS \
+            --fail-on-no-alarm
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f artifacts/manual/summary.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts/manual/summary.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-helmet-detection-${{ github.run_number }}
+          path: |
+            artifacts/manual/annotated.mp4
+            artifacts/manual/frames.jsonl
+            artifacts/manual/summary.json
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,0 +1,21 @@
+{
+  "roi": [0, 0, 448, 448],
+  "gate": [350, 20, 440, 120],
+  "candidate_threshold": 0.02,
+  "nms_threshold": 0.45,
+  "models": [
+    {
+      "name": "helmet_yolov8n",
+      "path": "../models/helmet_yolov8n_960.onnx",
+      "input_size": 960,
+      "helmet_class_id": 0,
+      "no_helmet_class_id": 1,
+      "alarm_threshold": 0.20
+    }
+  ],
+  "temporal": {
+    "window": 5,
+    "min_hits": 2,
+    "cooldown_seconds": 3.0
+  }
+}

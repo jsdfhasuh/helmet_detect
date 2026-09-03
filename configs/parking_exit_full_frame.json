@@ -1,0 +1,29 @@
+{
+  "roi": [360, 220, 920, 780],
+  "gate": [520, 420, 790, 545],
+  "candidate_threshold": 0.02,
+  "nms_threshold": 0.45,
+  "models": [
+    {
+      "name": "helmet_yolov8n",
+      "path": "../models/helmet_yolov8n_960.onnx",
+      "input_size": 960,
+      "helmet_class_id": 0,
+      "no_helmet_class_id": 1,
+      "alarm_threshold": 0.20
+    },
+    {
+      "name": "rider_yolo11m",
+      "path": "../models/rider_yolo11m_960.onnx",
+      "input_size": 960,
+      "helmet_class_id": 0,
+      "no_helmet_class_id": 1,
+      "alarm_threshold": 0.10
+    }
+  ],
+  "temporal": {
+    "window": 5,
+    "min_hits": 2,
+    "cooldown_seconds": 3.0
+  }
+}
