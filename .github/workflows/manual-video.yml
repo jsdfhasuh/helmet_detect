@@ -1,33 +1,22 @@
-name: Manual video detection
+name: Manual dynamic video detection
 
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: "Direct-download video URL. Leave blank to use the repository sample."
+        description: "Direct-download video URL. Leave blank to run the privacy-safe repository fixture."
         required: false
         type: string
-      layout:
-        description: "Input layout"
-        required: true
-        default: sample-roi
-        type: choice
-        options:
-          - sample-roi
-          - full-frame-camera
-      model_mode:
-        description: "Model mode"
-        required: true
-        default: fast
-        type: choice
-        options:
-          - fast
-          - dual
       sample_fps:
-        description: "Inference sampling FPS"
+        description: "Inference sampling FPS (5-10 recommended for real video)"
         required: true
         default: "5"
         type: string
+      show_contexts:
+        description: "Draw per-person dynamic context crops"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -35,7 +24,7 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -46,30 +35,27 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Restore exported ONNX models
+      - name: Restore verified PT models
         id: model-cache
         uses: actions/cache@v4
         with:
           path: |
-            models/*.onnx
-            models/model_sources.json
-            models/SHA256SUMS.txt
-          key: helmet-onnx-960-dual-v3-${{ hashFiles('scripts/prepare_models.py') }}
+            models/yolo11n.pt
+            models/helmet_yolov8n.pt
+            models/dynamic_model_sources.json
+            models/DYNAMIC_SHA256SUMS.txt
+          key: dynamic-helmet-pt-v2-${{ hashFiles('scripts/prepare_dynamic_models.py') }}
 
-      - name: Install dependencies
+      - name: Install dynamic runtime
         run: |
           python -m pip install --upgrade pip
-          if [ "${{ steps.model-cache.outputs.cache-hit }}" = "true" ]; then
-            python -m pip install -e ".[runtime]"
-          else
-            python -m pip install -e ".[runtime,export]"
-          fi
+          python -m pip install -e ".[dynamic]"
 
-      - name: Prepare models on cache miss
+      - name: Download and verify models on cache miss
         if: steps.model-cache.outputs.cache-hit != 'true'
-        run: python scripts/prepare_models.py
+        run: python scripts/prepare_dynamic_models.py
 
-      - name: Select or download input video
+      - name: Select or build input video
         env:
           VIDEO_URL: ${{ inputs.video_url }}
         run: |
@@ -79,35 +65,28 @@ jobs:
             curl --fail --location --retry 5 --retry-all-errors \
               "$VIDEO_URL" --output "$INPUT_VIDEO"
           else
-            INPUT_VIDEO="artifacts/manual/input.avi"
-            python scripts/build_sample_video.py --output "$INPUT_VIDEO"
+            python scripts/run_dynamic_regression.py \
+              --output artifacts/manual/fixture-regression
+            INPUT_VIDEO="artifacts/manual/fixture-regression/video/input.avi"
           fi
           test -s "$INPUT_VIDEO"
           echo "INPUT_VIDEO=$INPUT_VIDEO" >> "$GITHUB_ENV"
 
-      - name: Run detector
+      - name: Run full-frame dynamic detector
         shell: bash
         run: |
-          if [ "${{ inputs.layout }}" = "full-frame-camera" ]; then
-            CONFIG="configs/parking_exit_full_frame.json"
-          else
-            CONFIG="configs/parking_exit_roi.json"
+          CONTEXT_FLAG=""
+          if [ "${{ inputs.show_contexts }}" = "true" ]; then
+            CONTEXT_FLAG="--show-contexts"
           fi
-
-          if [ "${{ inputs.model_mode }}" = "fast" ]; then
-            MODELS="--models helmet_yolov8n"
-          else
-            MODELS=""
-          fi
-
           helmet-detect video \
-            --config "$CONFIG" \
+            --config configs/dynamic_full_frame.json \
             --source "$INPUT_VIDEO" \
             --output artifacts/manual/annotated.mp4 \
             --records artifacts/manual/frames.jsonl \
             --summary artifacts/manual/summary.json \
             --sample-fps "${{ inputs.sample_fps }}" \
-            $MODELS \
+            $CONTEXT_FLAG \
             --fail-on-no-alarm
 
       - name: Publish summary
@@ -123,10 +102,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: manual-helmet-detection-${{ github.run_number }}
+          name: manual-dynamic-helmet-detection-${{ github.run_number }}
           path: |
             artifacts/manual/annotated.mp4
             artifacts/manual/frames.jsonl
             artifacts/manual/summary.json
+            artifacts/manual/annotated_events/
+            artifacts/manual/fixture-regression/
           if-no-files-found: warn
           retention-days: 7
