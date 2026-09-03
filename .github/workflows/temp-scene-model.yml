@@ -1,4 +1,4 @@
-name: Temporary scene model download
+name: Temporary scene model export
 
 on:
   push:
@@ -11,24 +11,51 @@ permissions:
   contents: read
 
 jobs:
-  download:
+  export:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Download official YOLO11n ONNX
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install exporter
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "ultralytics==8.4.79" "onnx>=1.17,<2" "onnxslim>=0.1.59"
+      - name: Download and export official YOLO11n
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p model
           curl --fail --location --retry 5 --retry-all-errors \
-            "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx" \
-            --output model/yolo11n.onnx
-          echo "634279b40c07c6391472c51ad45b81ebc48706a9a1fe72dd3396322acd0c053b  model/yolo11n.onnx" | sha256sum -c -
-          sha256sum model/yolo11n.onnx > model/SHA256SUMS.txt
+            "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt" \
+            --output model/yolo11n.pt
+          sha256sum model/yolo11n.pt | tee model/SHA256SUMS-PT.txt
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          from ultralytics import YOLO
+
+          pt = Path("model/yolo11n.pt")
+          for size in (960, 1280):
+              exported = Path(YOLO(str(pt)).export(
+                  format="onnx",
+                  imgsz=size,
+                  opset=12,
+                  simplify=True,
+                  dynamic=False,
+                  batch=1,
+                  device="cpu",
+              ))
+              target = Path(f"model/yolo11n_{size}.onnx")
+              shutil.move(str(exported), target)
+          PY
+          sha256sum model/*.onnx | tee model/SHA256SUMS-ONNX.txt
           ls -lh model
       - name: Upload scene model
         uses: actions/upload-artifact@v4
         with:
-          name: yolo11n-scene-model
+          name: yolo11n-scene-model-fixed
           path: model/
           retention-days: 1
           compression-level: 0
