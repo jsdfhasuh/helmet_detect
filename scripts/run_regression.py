@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from helmet_detect.config import load_config
+from helmet_detect.fixtures import load_manifest_and_materialize
 from helmet_detect.pipeline import HelmetDetectionPipeline
 from helmet_detect.render import annotate_frame
 from helmet_detect.sample import build_video_from_images
@@ -235,10 +236,9 @@ def write_reports(
 
 def main() -> int:
     args = parse_args()
-    manifest_path = Path(args.manifest).resolve()
+    manifest_path, manifest = load_manifest_and_materialize(args.manifest)
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     cache: dict[Path, HelmetDetectionPipeline] = {}
 
     image_rows, failures = run_image_cases(

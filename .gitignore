@@ -12,3 +12,5 @@ models/SHA256SUMS.txt
 *.avi
 *.log
 .DS_Store
+models/model_sources.json
+testdata/camera_exit/images/*.webp

@@ -20,7 +20,7 @@ class Rect:
             raise ValueError(f"Invalid rectangle: {self}")
 
     @classmethod
-    def from_iterable(cls, values: Iterable[int]) -> "Rect":
+    def from_iterable(cls, values: Iterable[int]) -> Rect:
         items = tuple(int(value) for value in values)
         if len(items) != 4:
             raise ValueError("Rectangle must contain exactly four integers: x1,y1,x2,y2")
@@ -39,15 +39,15 @@ class Rect:
         return ((self.x1 + self.x2) / 2.0, (self.y1 + self.y2) / 2.0)
 
     def contains_point(self, x: float, y: float) -> bool:
-        return self.x1 <= x <= self.x2 and self.y1 <= y <= self.y2
+        return self.x1 <= x < self.x2 and self.y1 <= y < self.y2
 
-    def contains_centre(self, other: "Rect") -> bool:
+    def contains_centre(self, other: Rect) -> bool:
         return self.contains_point(*other.centre)
 
-    def translate(self, dx: int, dy: int) -> "Rect":
+    def translate(self, dx: int, dy: int) -> Rect:
         return Rect(self.x1 + dx, self.y1 + dy, self.x2 + dx, self.y2 + dy)
 
-    def clamp(self, width: int, height: int) -> "Rect | None":
+    def clamp(self, width: int, height: int) -> Rect | None:
         x1 = max(0, min(width, self.x1))
         y1 = max(0, min(height, self.y1))
         x2 = max(0, min(width, self.x2))

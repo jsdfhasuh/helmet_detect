@@ -20,7 +20,7 @@ class ModelConfig:
     input_size: int = 960
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], base_dir: Path) -> "ModelConfig":
+    def from_dict(cls, data: dict[str, Any], base_dir: Path) -> ModelConfig:
         raw_path = Path(str(data["path"]))
         path = raw_path if raw_path.is_absolute() else (base_dir / raw_path).resolve()
         threshold = float(data["alarm_threshold"])
@@ -43,7 +43,7 @@ class TemporalConfig:
     cooldown_seconds: float = 5.0
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "TemporalConfig":
+    def from_dict(cls, data: dict[str, Any] | None) -> TemporalConfig:
         data = data or {}
         result = cls(
             window=int(data.get("window", 5)),
@@ -69,7 +69,7 @@ class DetectorConfig:
     temporal: TemporalConfig = TemporalConfig()
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], base_dir: Path) -> "DetectorConfig":
+    def from_dict(cls, data: dict[str, Any], base_dir: Path) -> DetectorConfig:
         models = tuple(ModelConfig.from_dict(item, base_dir) for item in data["models"])
         if not models:
             raise ValueError("At least one model must be configured")
