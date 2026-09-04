@@ -17,10 +17,13 @@ class DynamicVideoSummary:
     output_fps: float
     processed_frames: int
     frames_with_people: int
+    frames_with_riders: int
     no_helmet_observation_frames: int
     alarm_frames: int
     events: int
+    high_confidence_events: int
     unique_tracks: int
+    raw_unique_tracks: int
     maximum_no_helmet_score: float
     output_path: str
     records_path: str
@@ -33,10 +36,13 @@ class DynamicVideoSummary:
             "output_fps": round(self.output_fps, 6),
             "processed_frames": self.processed_frames,
             "frames_with_people": self.frames_with_people,
+            "frames_with_riders": self.frames_with_riders,
             "no_helmet_observation_frames": self.no_helmet_observation_frames,
             "alarm_frames": self.alarm_frames,
             "events": self.events,
+            "high_confidence_events": self.high_confidence_events,
             "unique_tracks": self.unique_tracks,
+            "raw_unique_tracks": self.raw_unique_tracks,
             "maximum_no_helmet_score": round(self.maximum_no_helmet_score, 6),
             "output_path": self.output_path,
             "records_path": self.records_path,
@@ -93,11 +99,14 @@ def process_dynamic_video(
     frame_index = 0
     processed_frames = 0
     frames_with_people = 0
+    frames_with_riders = 0
     no_helmet_observation_frames = 0
     alarm_frames = 0
     event_count = 0
+    high_confidence_events = 0
     maximum_score = 0.0
-    unique_tracks: set[int] = set()
+    canonical_tracks: set[int] = set()
+    raw_tracks: set[int] = set()
 
     with records_path.open("w", encoding="utf-8") as records_file:
         while True:
@@ -116,10 +125,15 @@ def process_dynamic_video(
                 apply_temporal=True,
             )
             for person in result.persons:
-                unique_tracks.add(person.track_id)
+                canonical_tracks.add(person.track_id)
+                raw_tracks.add(person.source_track_id)
             frames_with_people += int(bool(result.persons))
+            frames_with_riders += int(any(person.rider_eligible for person in result.persons))
             no_helmet_observation_frames += int(
-                any(person.state is HelmetState.NO_HELMET for person in result.persons)
+                any(
+                    person.rider_eligible and person.state is HelmetState.NO_HELMET
+                    for person in result.persons
+                )
             )
             alarm_frames += int(result.alarm)
             maximum_score = max(maximum_score, result.maximum_no_helmet_score)
@@ -138,9 +152,12 @@ def process_dynamic_video(
             for person in result.persons:
                 if person.event_triggered:
                     event_count += 1
+                    if person.vote.trigger_mode == "high_confidence":
+                        high_confidence_events += 1
                     event_name = (
-                        f"event_{event_count:04d}_track_{person.track_id}_"
-                        f"t_{timestamp:.2f}.jpg"
+                        f"event_{event_count:04d}_id_{person.track_id}_"
+                        f"raw_{person.source_track_id}_"
+                        f"{person.vote.trigger_mode or 'event'}_t_{timestamp:.2f}.jpg"
                     )
                     event_path = events_directory / event_name
                     if not cv2.imwrite(str(event_path), annotated):
@@ -156,10 +173,13 @@ def process_dynamic_video(
         output_fps=output_fps,
         processed_frames=processed_frames,
         frames_with_people=frames_with_people,
+        frames_with_riders=frames_with_riders,
         no_helmet_observation_frames=no_helmet_observation_frames,
         alarm_frames=alarm_frames,
         events=event_count,
-        unique_tracks=len(unique_tracks),
+        high_confidence_events=high_confidence_events,
+        unique_tracks=len(canonical_tracks),
+        raw_unique_tracks=len(raw_tracks),
         maximum_no_helmet_score=maximum_score,
         output_path=str(output_path),
         records_path=str(records_path),

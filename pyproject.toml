@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "helmet-detect"
-version = "0.2.0"
-description = "Dynamic full-frame rider tracking and per-person safety helmet detection"
+version = "0.3.0"
+description = "Dynamic rider-only helmet detection with cross-ID de-duplication and dual-threshold alarms"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
