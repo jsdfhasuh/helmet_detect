@@ -44,7 +44,7 @@ jobs:
             models/helmet_yolov8n.pt
             models/dynamic_model_sources.json
             models/DYNAMIC_SHA256SUMS.txt
-          key: dynamic-helmet-pt-v2-${{ hashFiles('scripts/prepare_dynamic_models.py') }}
+          key: dynamic-helmet-pt-v3-${{ hashFiles('scripts/prepare_dynamic_models.py') }}
 
       - name: Install dynamic runtime
         run: |
@@ -62,15 +62,18 @@ jobs:
           mkdir -p artifacts/manual
           if [ -n "$VIDEO_URL" ]; then
             INPUT_VIDEO="artifacts/manual/input.mp4"
+            CONFIG_PATH="configs/dynamic_full_frame.json"
             curl --fail --location --retry 5 --retry-all-errors \
               "$VIDEO_URL" --output "$INPUT_VIDEO"
           else
             python scripts/run_dynamic_regression.py \
               --output artifacts/manual/fixture-regression
             INPUT_VIDEO="artifacts/manual/fixture-regression/video/input.avi"
+            CONFIG_PATH="configs/dynamic_regression_all_persons.json"
           fi
           test -s "$INPUT_VIDEO"
           echo "INPUT_VIDEO=$INPUT_VIDEO" >> "$GITHUB_ENV"
+          echo "CONFIG_PATH=$CONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Run full-frame dynamic detector
         shell: bash
@@ -80,7 +83,7 @@ jobs:
             CONTEXT_FLAG="--show-contexts"
           fi
           helmet-detect video \
-            --config configs/dynamic_full_frame.json \
+            --config "$CONFIG_PATH" \
             --source "$INPUT_VIDEO" \
             --output artifacts/manual/annotated.mp4 \
             --records artifacts/manual/frames.jsonl \
