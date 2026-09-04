@@ -46,7 +46,7 @@
     "high_confidence_no_helmet_threshold": 0.5
   },
   "association": {
-    "mode": "riders_only",
+    "mode": "all_persons",
     "vehicle_box_expansion": 0.25,
     "maximum_foot_distance_ratio": 1.6,
     "vehicle_evidence_window": 10,

@@ -23,7 +23,11 @@ from helmet_detect.fixtures import load_manifest_and_materialize
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", default="testdata/dynamic_camera/manifest.json")
-    parser.add_argument("--config", default="configs/dynamic_full_frame.json")
+    parser.add_argument(
+        "--config",
+        default="configs/dynamic_regression_all_persons.json",
+        help="Position-invariance regression config (all-persons mode by design)",
+    )
     parser.add_argument("--output", default="artifacts/dynamic-regression")
     return parser.parse_args()
 
@@ -216,6 +220,8 @@ def write_reports(
     image_rows: list[dict[str, Any]],
     video_row: dict[str, Any],
     failures: list[str],
+    *,
+    association_mode: str,
 ) -> None:
     report = {
         "passed": not failures,
@@ -247,6 +253,9 @@ def write_reports(
         "- Tracker: ByteTrack",
         "- Per-person helmet model: iam-tsr YOLOv8n",
         "- Fixed ROI/gate: disabled",
+        f"- Association mode: {association_mode}",
+        "- Cross-ID stitching: enabled",
+        "- Dual threshold voting: enabled",
         "",
         "## Position-invariance image cases",
         "",
@@ -266,10 +275,13 @@ def write_reports(
             "",
             f"- Processed frames: {video_row['processed_frames']}",
             f"- Frames with people: {video_row['frames_with_people']}",
+            f"- Frames with riders: {video_row['frames_with_riders']}",
             "- No-helmet observation frames: "
             f"{video_row['no_helmet_observation_frames']}",
             f"- Alarm events: {video_row['events']}",
-            f"- Unique tracks: {video_row['unique_tracks']}",
+            f"- High-confidence events: {video_row['high_confidence_events']}",
+            f"- Canonical tracks: {video_row['unique_tracks']}",
+            f"- Raw tracks: {video_row['raw_unique_tracks']}",
             "- Maximum no-helmet score: "
             f"{video_row['maximum_no_helmet_score']:.4f}",
         ]
@@ -302,7 +314,13 @@ def main() -> int:
         output_dir,
     )
     failures.extend(video_failures)
-    write_reports(output_dir, image_rows, video_row, failures)
+    write_reports(
+        output_dir,
+        image_rows,
+        video_row,
+        failures,
+        association_mode=pipeline.config.association.mode,
+    )
     print((output_dir / "summary.md").read_text(encoding="utf-8"))
     if failures:
         for failure in failures:

@@ -41,7 +41,10 @@ def annotate_dynamic_frame(
                     1,
                 )
 
-        if observation.state is HelmetState.NO_HELMET:
+        if not observation.rider_eligible:
+            colour = (130, 130, 130)
+            status = "NON-RIDER"
+        elif observation.state is HelmetState.NO_HELMET:
             colour = (0, 0, 255)
             status = "NO-HELMET"
         elif observation.state is HelmetState.HELMET:
@@ -52,7 +55,10 @@ def annotate_dynamic_frame(
             status = "UNKNOWN"
         if observation.event_triggered:
             colour = (0, 0, 255)
-            status += " EVENT"
+            suffix = observation.vote.trigger_mode or "event"
+            status += f" EVENT:{suffix}"
+        elif observation.vote.event_suppressed:
+            status += " DEDUP"
 
         person_box = observation.person.box
         cv2.rectangle(
@@ -80,10 +86,18 @@ def annotate_dynamic_frame(
             box = detection.box
             cv2.rectangle(output, (box.x1, box.y1), (box.x2, box.y2), head_colour, 2)
 
+        raw_suffix = (
+            f"/raw{observation.source_track_id}"
+            if observation.source_track_id != observation.track_id
+            else ""
+        )
         label = (
-            f"ID {observation.track_id} {status} "
+            f"ID {observation.track_id}{raw_suffix} {status} "
             f"N={observation.no_helmet_score:.2f} H={observation.helmet_score:.2f} "
-            f"vote={observation.vote.hit_count}/{config.temporal.minimum_no_helmet_hits}"
+            f"vote={observation.vote.hit_count}/{config.temporal.minimum_no_helmet_hits} "
+            f"hi={observation.vote.high_confidence_hit_count}/"
+            f"{config.temporal.high_confidence_minimum_hits} "
+            f"veh={observation.rider_evidence.vehicle_hit_count}"
         )
         _draw_label(output, label, person_box.x1, person_box.y1, colour)
 
@@ -118,8 +132,9 @@ def annotate_dynamic_frame(
         cv2.LINE_AA,
     )
     detail = (
-        f"t={result.timestamp_seconds:.2f}s  tracks={len(result.persons)}  "
-        f"events={result.event_count}  max_no_helmet={result.maximum_no_helmet_score:.3f}"
+        f"t={result.timestamp_seconds:.2f}s  people={len(result.persons)}  "
+        f"riders={result.rider_count}  events={result.event_count}  "
+        f"max_no_helmet={result.maximum_no_helmet_score:.3f}"
     )
     cv2.putText(
         output,
@@ -143,7 +158,7 @@ def _draw_label(
 ) -> None:
     import cv2
 
-    size, baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)
+    size, baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
     left = max(0, min(image.shape[1] - size[0] - 6, x))
     bottom = max(64 + size[1], y - 5)
     cv2.rectangle(
@@ -158,7 +173,7 @@ def _draw_label(
         text,
         (left + 3, bottom - 2),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.46,
+        0.42,
         colour,
         1,
         cv2.LINE_AA,

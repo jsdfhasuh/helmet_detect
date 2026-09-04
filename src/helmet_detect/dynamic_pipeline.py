@@ -24,6 +24,8 @@ from .geometry import (
     match_vehicle,
     point_in_normalised_polygon,
 )
+from .identity import CrossIdIdentityResolver, ResolvedPerson
+from .rider_state import RiderEvidence, RiderEvidenceTracker
 from .track_state import PerTrackTemporalAlarm
 from .types import Detection
 from .ultralytics_backend import (
@@ -35,7 +37,7 @@ from .ultralytics_backend import (
 
 
 class DynamicHelmetDetectionPipeline:
-    """Detect people globally, crop around each person, then judge helmet state."""
+    """Detect people globally, stitch IDs, select riders, then judge helmet state."""
 
     def __init__(
         self,
@@ -50,6 +52,16 @@ class DynamicHelmetDetectionPipeline:
         self.temporal = PerTrackTemporalAlarm(config.temporal)
         self.fallback_tracker = GreedyPersonTracker(
             maximum_age_seconds=config.temporal.maximum_track_age_seconds
+        )
+        self.identity_resolver = CrossIdIdentityResolver(config.identity)
+        rider_age = max(
+            config.temporal.maximum_track_age_seconds,
+            config.identity.maximum_gap_seconds,
+            config.association.vehicle_grace_seconds,
+        )
+        self.rider_tracker = RiderEvidenceTracker(
+            config.association,
+            maximum_age_seconds=rider_age,
         )
 
     def detect_frame(
@@ -77,32 +89,42 @@ class DynamicHelmetDetectionPipeline:
             maximum_people=self.config.scene_model.maximum_persons,
         )
         people = self.fallback_tracker.assign(people, timestamp_seconds)
+        resolved_people = self.identity_resolver.resolve_frame(
+            people,
+            frame,
+            timestamp_seconds,
+        )
         vehicles = [
             item
             for item in scene_objects
             if item.class_id in self.config.scene_model.vehicle_class_ids
         ]
 
-        eligible_people: list[tuple[SceneObject, SceneObject | None]] = []
-        for person in people:
+        candidates: list[tuple[ResolvedPerson, SceneObject | None, RiderEvidence]] = []
+        for resolved in resolved_people:
             vehicle = match_vehicle(
-                person,
+                resolved.person,
                 vehicles,
                 config=self.config.association,
                 frame_width=frame_width,
                 frame_height=frame_height,
             )
-            if self.config.association.require_vehicle and vehicle is None:
-                continue
-            eligible_people.append((person, vehicle))
+            rider_evidence = self.rider_tracker.update(
+                resolved.canonical_track_id,
+                timestamp_seconds,
+                has_vehicle_match=vehicle is not None,
+            )
+            candidates.append((resolved, vehicle, rider_evidence))
 
         crop_metadata = []
         crop_images: list[np.ndarray] = []
-        context_boxes_by_person: list[list] = [[] for _ in eligible_people]
-        for person_index, (person, _) in enumerate(eligible_people):
+        context_boxes_by_person: list[list] = [[] for _ in candidates]
+        for person_index, (resolved, _, rider_evidence) in enumerate(candidates):
+            if not rider_evidence.eligible:
+                continue
             contexts = build_context_crops(
                 person_index,
-                person,
+                resolved.person,
                 config=self.config.helmet_model,
                 frame_width=frame_width,
                 frame_height=frame_height,
@@ -125,9 +147,9 @@ class DynamicHelmetDetectionPipeline:
                 f"({len(crop_results)}) than input crops ({len(crop_metadata)})"
             )
 
-        detections_by_person: list[list[Detection]] = [[] for _ in eligible_people]
+        detections_by_person: list[list[Detection]] = [[] for _ in candidates]
         for context, detections in zip(crop_metadata, crop_results, strict=True):
-            person = eligible_people[context.person_index][0]
+            person = candidates[context.person_index][0].person
             head_zone = build_head_zone(
                 person,
                 config=self.config.helmet_model,
@@ -148,7 +170,7 @@ class DynamicHelmetDetectionPipeline:
                     detections_by_person[context.person_index].append(global_detection)
 
         observations: list[PersonObservation] = []
-        for person_index, (person, vehicle) in enumerate(eligible_people):
+        for person_index, (resolved, vehicle, rider_evidence) in enumerate(candidates):
             head_detections = _merge_duplicate_head_detections(
                 detections_by_person[person_index]
             )
@@ -168,29 +190,54 @@ class DynamicHelmetDetectionPipeline:
                 ),
                 default=0.0,
             )
-            state = _helmet_state(
-                best_no_helmet,
-                best_helmet,
-                config=self.config,
+            state = (
+                _helmet_state(
+                    best_no_helmet,
+                    best_helmet,
+                    config=self.config,
+                )
+                if rider_evidence.eligible
+                else HelmetState.UNKNOWN
             )
-            track_id = person.track_id
-            if track_id is None:  # pragma: no cover - fallback tracker always assigns one
-                raise RuntimeError("Person has no track ID after fallback assignment")
+            canonical_id = resolved.canonical_track_id
 
-            if apply_temporal:
-                vote = self.temporal.update(track_id, timestamp_seconds, state)
+            if apply_temporal and rider_evidence.eligible:
+                vote = self.temporal.update(
+                    canonical_id,
+                    timestamp_seconds,
+                    state,
+                    no_helmet_score=best_no_helmet,
+                    high_confidence_threshold=(
+                        self.config.helmet_model.high_confidence_no_helmet_threshold
+                    ),
+                )
+            elif apply_temporal:
+                vote = self.temporal.inactive_vote()
             else:
-                is_alarm = state is HelmetState.NO_HELMET
+                is_alarm = (
+                    rider_evidence.eligible
+                    and state is HelmetState.NO_HELMET
+                )
                 vote = TrackVote(
                     hit_count=int(is_alarm),
-                    valid_observations=int(state is not HelmetState.UNKNOWN),
+                    high_confidence_hit_count=int(
+                        is_alarm
+                        and best_no_helmet
+                        >= self.config.helmet_model.high_confidence_no_helmet_threshold
+                    ),
+                    valid_observations=int(
+                        rider_evidence.eligible
+                        and state is not HelmetState.UNKNOWN
+                    ),
                     window_size=1,
                     active=is_alarm,
                     event_triggered=is_alarm,
+                    event_suppressed=False,
+                    trigger_mode="single_frame" if is_alarm else None,
                 )
 
-            foot_x = person.box.centre[0]
-            foot_y = person.box.y2
+            foot_x = resolved.person.box.centre[0]
+            foot_y = resolved.person.box.y2
             zone_eligible = point_in_normalised_polygon(
                 foot_x,
                 foot_y,
@@ -200,9 +247,13 @@ class DynamicHelmetDetectionPipeline:
             )
             observations.append(
                 PersonObservation(
-                    track_id=track_id,
-                    person=person,
+                    track_id=canonical_id,
+                    source_track_id=resolved.source_track_id,
+                    identity_stitched=resolved.stitched,
+                    appearance_similarity=resolved.appearance_similarity,
+                    person=resolved.person,
                     matched_vehicle=vehicle,
+                    rider_evidence=rider_evidence,
                     state=state,
                     no_helmet_score=best_no_helmet,
                     helmet_score=best_helmet,
@@ -214,6 +265,8 @@ class DynamicHelmetDetectionPipeline:
             )
 
         self.temporal.prune(timestamp_seconds)
+        self.rider_tracker.prune(timestamp_seconds)
+        self.identity_resolver.prune(timestamp_seconds)
         return DynamicFrameResult(
             timestamp_seconds=timestamp_seconds,
             scene_objects=tuple(scene_objects),
@@ -223,6 +276,8 @@ class DynamicHelmetDetectionPipeline:
     def reset(self) -> None:
         self.temporal.reset()
         self.fallback_tracker.reset()
+        self.identity_resolver.reset()
+        self.rider_tracker.reset()
 
 
 def _helmet_state(

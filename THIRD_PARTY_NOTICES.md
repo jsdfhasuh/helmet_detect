@@ -30,7 +30,7 @@ The Ultralytics software, pretrained weights, and commercial deployment terms mu
 - Local name: `models/rider_yolo11m.pt`
 - SHA256: `5769c45395a73739cb35cf28ed16e5d0acc3a0c90e1fac588fdb8a7403b3a930`
 - Classes observed in the weight: `With Helmet`, `Without Helmet`
-- Role: optional comparison/fallback model; not enabled by the V2 default configuration
+- Role: optional comparison/fallback model; not enabled by the V3 default configuration
 - Model-page license marker at integration time: MIT
 
 ## Important licensing note
