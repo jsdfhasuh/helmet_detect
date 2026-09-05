@@ -1,0 +1,26 @@
+name: Scene candidate preparation
+on:
+  push:
+    branches: [fix/early-helmet-inference]
+    paths: [.github/workflows/scene-candidates.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch official public model candidates
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          for name in yolo11s yolov8s; do
+            curl --fail --location --retry 3 "https://github.com/ultralytics/assets/releases/download/v8.3.0/${name}.pt" -o "models/${name}.pt"
+          done
+          sha256sum models/*.pt > models/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-scene-candidates
+          path: models/
+          retention-days: 3
