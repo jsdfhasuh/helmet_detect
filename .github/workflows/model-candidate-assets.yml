@@ -1,0 +1,30 @@
+name: Model candidate assets
+on:
+  push:
+    branches: [fix/early-helmet-inference]
+    paths: [.github/workflows/model-candidate-assets.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download public weights only (no camera data)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidates
+          curl --fail --location --retry 3 --max-time 180 https://huggingface.co/keremberke/yolov8n-hard-hat-detection/resolve/287bafa2feb311ee45d21f9e9b33315ff6ff955d/best.pt -o candidates/hardhat_n.pt
+          curl --fail --location --retry 3 --max-time 180 https://huggingface.co/keremberke/yolov8s-hard-hat-detection/resolve/main/best.pt -o candidates/hardhat_s.pt
+          echo '05ed3a517485292d42d6eb6c9be3987ea51cd162e04807d2741eadcac8a19e6c  candidates/hardhat_n.pt' | sha256sum --check
+          echo '51a135396230b6154fc0edc3226b933bbe7a4f2b6c239e0aeb78254b1eebabd2  candidates/hardhat_s.pt' | sha256sum --check
+          curl --fail --location --retry 3 --max-time 180 https://huggingface.co/vivekvar/helmet-v5/resolve/main/models/helmet_head_v2.pt -o candidates/helmet_head_v2.pt
+          curl --fail --location --retry 3 --max-time 120 https://huggingface.co/vivekvar/helmet-v5/resolve/main/tools/train_head_classifier.py -o candidates/train_head_classifier.reference.txt
+          sha256sum candidates/* > candidates/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: head-model-candidates
+          path: candidates/
+          retention-days: 3
