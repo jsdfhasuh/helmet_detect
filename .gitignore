@@ -17,3 +17,6 @@ models/dynamic_model_sources.json
 .DS_Store
 testdata/camera_exit/images/*.webp
 testdata/dynamic_camera/images/*.webp
+*.egg-info/
+build/
+dist/
