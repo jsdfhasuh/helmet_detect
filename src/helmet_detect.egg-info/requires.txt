@@ -1,0 +1,17 @@
+numpy==2.3.5
+
+[dev]
+pytest<9,>=8
+ruff<1,>=0.8
+
+[dynamic]
+ultralytics==8.4.79
+lap>=0.5.12
+
+[export]
+ultralytics==8.4.79
+onnx<2,>=1.17
+onnxslim>=0.1.59
+
+[runtime]
+opencv-python-headless==4.13.0.92

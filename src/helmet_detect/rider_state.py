@@ -73,7 +73,7 @@ class RiderEvidenceTracker:
         if not self.config.riders_only:
             eligible = True
             reason = "all_persons_mode"
-        elif has_vehicle_match:
+        elif has_vehicle_match and history.confirmed:
             eligible = True
             reason = "current_vehicle_match"
         elif history.confirmed and recent_vehicle:

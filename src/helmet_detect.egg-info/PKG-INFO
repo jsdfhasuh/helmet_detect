@@ -1,0 +1,223 @@
+Metadata-Version: 2.4
+Name: helmet-detect
+Version: 0.3.0
+Summary: Dynamic rider-only helmet detection with cross-ID de-duplication and dual-threshold alarms
+Author: Jiahao Cai
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy==2.3.5
+Provides-Extra: runtime
+Requires-Dist: opencv-python-headless==4.13.0.92; extra == "runtime"
+Provides-Extra: dynamic
+Requires-Dist: ultralytics==8.4.79; extra == "dynamic"
+Requires-Dist: lap>=0.5.12; extra == "dynamic"
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8; extra == "dev"
+Requires-Dist: ruff<1,>=0.8; extra == "dev"
+Provides-Extra: export
+Requires-Dist: ultralytics==8.4.79; extra == "export"
+Requires-Dist: onnx<2,>=1.17; extra == "export"
+Requires-Dist: onnxslim>=0.1.59; extra == "export"
+Dynamic: license-file
+
+# helmet_detect
+
+[![CI](https://github.com/jsdfhasuh/helmet_detect/actions/workflows/ci.yml/badge.svg)](https://github.com/jsdfhasuh/helmet_detect/actions/workflows/ci.yml)
+
+面向固定监控视频的电动车／摩托车骑行人员安全头盔检测。当前 V3 主流程不使用固定 ROI 或固定 Gate，而是对完整画面寻找人员、关联两轮车、跟踪身份，再对每名骑行人员单独判断头盔状态。
+
+## 默认模型
+
+| 阶段 | 模型 | 作用 |
+|---|---|---|
+| 场景检测 | Ultralytics 官方 `yolo11n.pt`（COCO） | 全画面检测 `person`、`bicycle`、`motorcycle` |
+| 跟踪 | ByteTrack | 生成原始 Track ID |
+| 头盔检测 | `iam-tsr/yolov8n-helmet-detection` | 对人员动态上下文判断 `With Helmet` / `Without Helmet` |
+
+公共模型只用于冷启动和工程验证。正式部署仍应使用本机位数据微调头盔模型。
+
+## V3 流程
+
+```text
+完整视频帧
+    ↓
+YOLO11n 全画面检测 person / bicycle / motorcycle
+    ↓
+ByteTrack + fallback tracker 得到原始 Track ID
+    ↓
+跨 ID 身份拼接，得到稳定 canonical ID
+    ↓
+人员与两轮车关联，并累计骑行证据
+    ↓
+只对确认或近期确认的骑行人员生成动态多尺度上下文
+    ↓
+YOLOv8n 判断 Helmet / No-Helmet
+    ↓
+按 canonical ID 使用普通阈值和高置信度阈值投票
+    ↓
+同一人员一次经过只产生一个事件
+```
+
+## 三项关键改进
+
+### 1. 跨 ID 去重
+
+ByteTrack 在远距离、遮挡或目标很小时可能改变 ID。V3 使用以下信息把短时间内的新 ID 拼接回原身份：
+
+- 预测中心位置与移动速度；
+- 人体框高度变化；
+- 人体区域的紧凑颜色特征；
+- 一对一匹配，避免同一身份同时分配给两个人。
+
+输出中：
+
+- `source_track_id`：ByteTrack／fallback tracker 的原始 ID；
+- `track_id`：用于投票和去重的 canonical ID；
+- `identity_stitched`：当前原始 ID 是否已拼接到旧身份。
+
+同一 canonical ID 在一次会话中默认只报警一次。只有连续确认该人员已戴头盔后，才允许重新进入报警会话。
+
+### 2. 骑行人员模式
+
+默认配置为：
+
+```json
+"association": {
+  "mode": "riders_only",
+  "vehicle_evidence_window": 10,
+  "minimum_vehicle_hits": 1,
+  "vehicle_grace_seconds": 3.0
+}
+```
+
+只有当前帧匹配到自行车／摩托车，或同一 canonical ID 在最近 3 秒内已有车辆证据时，才执行头盔判断并允许报警。这能过滤普通步行人员，同时避免车辆检测偶尔丢失就立即中断头盔检测。
+
+需要检测厂区所有人员时，可改为：
+
+```json
+"mode": "all_persons"
+```
+
+### 3. 高置信度双阈值
+
+默认报警规则：
+
+```text
+普通路径：No-Helmet >= 0.20，最近 8 次中至少命中 3 次
+高置信度路径：No-Helmet >= 0.50，命中 1 次即可快速触发
+```
+
+高置信度路径仍必须满足骑行人员证据和头部关联约束。输出中的 `vote.trigger_mode` 会标记：
+
+```text
+normal
+high_confidence
+```
+
+## 本地安装
+
+推荐 Python 3.10～3.12：
+
+```powershell
+git clone https://github.com/jsdfhasuh/helmet_detect.git
+cd helmet_detect
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[dynamic,dev]"
+```
+
+下载并校验默认模型：
+
+```powershell
+python scripts\prepare_dynamic_models.py
+```
+
+生成：
+
+```text
+models/yolo11n.pt
+models/helmet_yolov8n.pt
+models/dynamic_model_sources.json
+models/DYNAMIC_SHA256SUMS.txt
+```
+
+## 测试视频
+
+```powershell
+helmet-detect video `
+  --config .\configs\dynamic_full_frame.json `
+  --source "D:\videos\camera.mp4" `
+  --output .\artifacts\video\annotated.mp4 `
+  --records .\artifacts\video\frames.jsonl `
+  --summary .\artifacts\video\summary.json `
+  --sample-fps 5 `
+  --show-contexts
+```
+
+建议有效推理频率为 5～10 FPS。`--show-contexts` 会绘制跟随人员移动的动态裁剪框。
+
+单张图片：
+
+```powershell
+helmet-detect image `
+  --config .\configs\dynamic_full_frame.json `
+  --source .\test.jpg `
+  --output .\artifacts\image\annotated.jpg `
+  --json .\artifacts\image\result.json `
+  --show-contexts
+```
+
+## 自动测试
+
+单元测试：
+
+```powershell
+pytest
+```
+
+真实模型位置不变性回归：
+
+```powershell
+python scripts\run_dynamic_regression.py
+```
+
+该回归专门使用 `configs/dynamic_regression_all_persons.json`，因为隐私处理后的紧凑测试片段不保证 COCO 能稳定识别其车辆。骑行模式、跨 ID 拼接、双阈值和单会话去重由独立单元／集成测试覆盖。
+
+GitHub Actions 会执行：
+
+- Ruff 和 pytest；
+- 下载并校验两套真实 PT 权重；
+- 将同一真实目标放置在画面左、中、右三个位置；
+- 验证全画面人员检测与头盔判断不依赖固定坐标；
+- 运行视频跟踪和时序报警；
+- 上传标注图片、标注视频、JSONL、CSV 和报告。
+
+## 重要配置
+
+`configs/dynamic_full_frame.json`：
+
+- `scene_model.image_size`：全画面人员检测分辨率；
+- `scene_model.minimum_person_height`：忽略几乎不可辨识的小目标；
+- `association.mode`：`riders_only` 或 `all_persons`；
+- `association.vehicle_grace_seconds`：车辆证据丢失后的保留时间；
+- `identity.maximum_gap_seconds`：跨 ID 拼接允许的最大时间间隔；
+- `identity.maximum_center_distance_ratio`：跨 ID 空间匹配限制；
+- `helmet_model.no_helmet_threshold`：普通未戴头盔阈值；
+- `helmet_model.high_confidence_no_helmet_threshold`：快速触发阈值；
+- `temporal.minimum_no_helmet_hits`：普通路径命中数；
+- `temporal.high_confidence_minimum_hits`：高置信度路径命中数；
+- `temporal.one_event_per_track_session`：同一人员一次会话只报警一次；
+- `alarm_zone`：可选归一化报警多边形；它只限制报警区域，不限制模型检测范围。
+
+## 当前限制
+
+- COCO 的 `motorcycle` 类不等同于所有中国式电动车，骑行模式仍可能受车辆召回率影响；
+- 第一阶段没有找到人员时，第二阶段无法判断头盔；
+- 跨 ID 拼接是短时身份连续性算法，不是人员身份识别或人脸识别；
+- 单帧高置信度快速触发需要结合现场误报数据重新标定阈值；
+- 公共头盔模型对普通帽子、背面、遮挡和远距离目标仍可能波动。
+
+模型来源、摘要和许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

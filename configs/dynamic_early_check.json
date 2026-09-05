@@ -1,0 +1,87 @@
+{
+  "pipeline": "dynamic_v2",
+  "scene_model": {
+    "path": "../models/yolo11n.pt",
+    "image_size": 1280,
+    "confidence": 0.05,
+    "iou": 0.45,
+    "device": "auto",
+    "tracker": "bytetrack.yaml",
+    "person_class_id": 0,
+    "vehicle_class_ids": [
+      1,
+      3
+    ],
+    "minimum_person_confidence": 0.08,
+    "minimum_person_height": 55,
+    "maximum_persons": 8,
+    "preserve_untracked_detections": true
+  },
+  "helmet_model": {
+    "path": "../models/helmet_yolov8n.pt",
+    "image_size": 960,
+    "candidate_threshold": 0.005,
+    "iou": 0.45,
+    "device": "auto",
+    "helmet_class_id": 0,
+    "no_helmet_class_id": 1,
+    "no_helmet_threshold": 0.2,
+    "helmet_threshold": 0.35,
+    "no_helmet_to_helmet_ratio": 0.8,
+    "context_height_multipliers": [
+      3.1,
+      3.7
+    ],
+    "context_frame_scales": [
+      0.45,
+      0.52
+    ],
+    "maximum_contexts_per_person": 1,
+    "context_center_y_fraction": 0.1,
+    "context_deduplication_ratio": 0.08,
+    "minimum_context_size": 160,
+    "maximum_context_frame_ratio": 0.8,
+    "head_zone_expand_x": 0.6,
+    "head_zone_above": 0.4,
+    "head_zone_below": 0.55,
+    "high_confidence_no_helmet_threshold": 0.5
+  },
+  "association": {
+    "mode": "riders_only",
+    "vehicle_box_expansion": 0.25,
+    "maximum_foot_distance_ratio": 1.6,
+    "vehicle_evidence_window": 10,
+    "minimum_vehicle_hits": 1,
+    "vehicle_grace_seconds": 3.0
+  },
+  "temporal": {
+    "window": 8,
+    "minimum_no_helmet_hits": 3,
+    "minimum_valid_observations": 3,
+    "cooldown_seconds": 8.0,
+    "maximum_track_age_seconds": 4.0,
+    "high_confidence_minimum_hits": 1,
+    "helmet_rearm_hits": 3,
+    "one_event_per_track_session": true,
+    "observation_ttl_seconds": 1.5
+  },
+  "alarm_zone": null,
+  "draw_scene_objects": true,
+  "identity": {
+    "enabled": true,
+    "maximum_gap_seconds": 4.0,
+    "maximum_center_distance_ratio": 1.25,
+    "maximum_height_ratio": 1.9,
+    "minimum_appearance_similarity": 0.25,
+    "appearance_weight": 0.65,
+    "maximum_prediction_seconds": 1.5,
+    "velocity_smoothing": 0.55
+  },
+  "early_check": {
+    "enabled": true,
+    "probe_seconds": 2.0,
+    "interval_seconds": 0.2,
+    "maximum_pending_people": 2,
+    "conflict_margin": 0.1
+  }
+}

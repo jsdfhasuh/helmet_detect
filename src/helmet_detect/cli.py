@@ -52,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
     video_parser.add_argument("--sample-fps", type=float, default=5.0)
     video_parser.add_argument("--models", help="Legacy: comma-separated model names")
     video_parser.add_argument("--show-contexts", action="store_true")
+    video_parser.add_argument("--no-video", action="store_true",
+                              help="Dynamic: write records/events without continuous video")
+    video_parser.add_argument("--cpu-threads", type=int, default=0,
+                              help="PyTorch CPU threads (0 keeps its default)")
     video_parser.add_argument("--fail-on-no-alarm", action="store_true")
     return parser
 
@@ -117,6 +121,12 @@ def run_image(args: argparse.Namespace) -> int:
 
 
 def run_video(args: argparse.Namespace) -> int:
+    if args.cpu_threads < 0:
+        raise ValueError("--cpu-threads must be non-negative")
+    if args.cpu_threads:
+        import torch
+
+        torch.set_num_threads(args.cpu_threads)
     if _is_dynamic(args.config):
         if args.models:
             raise ValueError("--models is only supported by legacy configurations")
@@ -129,9 +139,12 @@ def run_video(args: argparse.Namespace) -> int:
             args.records,
             sample_fps=args.sample_fps,
             show_contexts=args.show_contexts,
+            save_video=not args.no_video,
         )
         success = summary.events > 0
     else:
+        if args.no_video:
+            raise ValueError("--no-video requires a dynamic configuration")
         config = load_config(args.config)
         pipeline = HelmetDetectionPipeline(
             config,

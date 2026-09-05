@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .rider_state import RiderEvidence
@@ -81,6 +81,8 @@ class PersonObservation:
     context_boxes: tuple[Rect, ...]
     vote: TrackVote
     alarm_zone_eligible: bool
+    helmet_evaluated: bool = True
+    head_check_reason: str = "rider"
 
     @property
     def is_likely_rider(self) -> bool:
@@ -124,6 +126,8 @@ class PersonObservation:
             "rider_eligible": self.rider_eligible,
             "rider_evidence": self.rider_evidence.to_dict(),
             "state": self.state.value,
+            "helmet_evaluated": self.helmet_evaluated,
+            "head_check_reason": self.head_check_reason,
             "no_helmet_score": round(self.no_helmet_score, 6),
             "helmet_score": round(self.helmet_score, 6),
             "head_detections": [item.to_dict() for item in self.head_detections],
@@ -140,6 +144,7 @@ class DynamicFrameResult:
     timestamp_seconds: float
     scene_objects: tuple[SceneObject, ...]
     persons: tuple[PersonObservation, ...]
+    diagnostics: dict[str, object] = field(default_factory=dict)
 
     @property
     def alarm(self) -> bool:
@@ -164,6 +169,7 @@ class DynamicFrameResult:
             "event_count": self.event_count,
             "rider_count": self.rider_count,
             "maximum_no_helmet_score": round(self.maximum_no_helmet_score, 6),
+            "diagnostics": self.diagnostics,
             "scene_objects": [item.to_dict() for item in self.scene_objects],
             "persons": [item.to_dict() for item in self.persons],
         }

@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
+
+import numpy as np
 
 from .dynamic_pipeline import DynamicHelmetDetectionPipeline
 from .dynamic_render import annotate_dynamic_frame
@@ -28,6 +31,10 @@ class DynamicVideoSummary:
     output_path: str
     records_path: str
     events_directory: str
+    elapsed_seconds: float = 0.0
+    pipeline_p95_ms: float = 0.0
+    mean_helmet_crops: float = 0.0
+    annotated_video_written: bool = True
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -47,6 +54,13 @@ class DynamicVideoSummary:
             "output_path": self.output_path,
             "records_path": self.records_path,
             "events_directory": self.events_directory,
+            "elapsed_seconds": round(self.elapsed_seconds, 3),
+            "measured_processing_fps": round(
+                self.processed_frames / max(self.elapsed_seconds, 1e-9), 3
+            ),
+            "pipeline_p95_ms": round(self.pipeline_p95_ms, 3),
+            "mean_helmet_crops": round(self.mean_helmet_crops, 3),
+            "annotated_video_written": self.annotated_video_written,
         }
 
 
@@ -58,12 +72,16 @@ def process_dynamic_video(
     *,
     sample_fps: float = 5.0,
     show_contexts: bool = False,
+    save_video: bool = True,
 ) -> DynamicVideoSummary:
     try:
         import cv2
     except ImportError as exc:  # pragma: no cover - runtime guard
         raise RuntimeError("OpenCV is required. Install with: pip install -e '.[runtime]'") from exc
 
+    begun = perf_counter()
+    durations: list[float] = []
+    crop_counts: list[int] = []
     source_path = str(source)
     capture = cv2.VideoCapture(source_path)
     if not capture.isOpened():
@@ -85,15 +103,15 @@ def process_dynamic_video(
     records_path.parent.mkdir(parents=True, exist_ok=True)
     events_directory.mkdir(parents=True, exist_ok=True)
 
-    writer = cv2.VideoWriter(
-        str(output_path),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        output_fps,
-        (frame_width, frame_height),
-    )
-    if not writer.isOpened():
-        capture.release()
-        raise RuntimeError(f"Cannot create output video: {output_path}")
+    writer = None
+    if save_video:
+        writer = cv2.VideoWriter(
+            str(output_path), cv2.VideoWriter_fourcc(*"mp4v"),
+            output_fps, (frame_width, frame_height),
+        )
+        if not writer.isOpened():
+            capture.release()
+            raise RuntimeError(f"Cannot create output video: {output_path}")
 
     pipeline.reset()
     frame_index = 0
@@ -108,66 +126,76 @@ def process_dynamic_video(
     canonical_tracks: set[int] = set()
     raw_tracks: set[int] = set()
 
-    with records_path.open("w", encoding="utf-8") as records_file:
-        while True:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            if frame_index % stride != 0:
-                frame_index += 1
-                continue
+    try:
+        with records_path.open("w", encoding="utf-8") as records_file:
+            while True:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                if frame_index % stride != 0:
+                    frame_index += 1
+                    continue
 
-            timestamp = frame_index / source_fps
-            result = pipeline.detect_frame(
-                frame,
-                timestamp_seconds=timestamp,
-                persist_tracks=True,
-                apply_temporal=True,
-            )
-            for person in result.persons:
-                canonical_tracks.add(person.track_id)
-                raw_tracks.add(person.source_track_id)
-            frames_with_people += int(bool(result.persons))
-            frames_with_riders += int(any(person.rider_eligible for person in result.persons))
-            no_helmet_observation_frames += int(
-                any(
-                    person.rider_eligible and person.state is HelmetState.NO_HELMET
-                    for person in result.persons
+                timestamp = frame_index / source_fps
+                inference_started = perf_counter()
+                result = pipeline.detect_frame(
+                    frame,
+                    timestamp_seconds=timestamp,
+                    persist_tracks=True,
+                    apply_temporal=True,
                 )
-            )
-            alarm_frames += int(result.alarm)
-            maximum_score = max(maximum_score, result.maximum_no_helmet_score)
-
-            record = result.to_dict()
-            record["frame_index"] = frame_index
-            records_file.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-            annotated = annotate_dynamic_frame(
-                frame,
-                result,
-                config=pipeline.config,
-                show_contexts=show_contexts,
-            )
-            writer.write(annotated)
-            for person in result.persons:
-                if person.event_triggered:
-                    event_count += 1
-                    if person.vote.trigger_mode == "high_confidence":
-                        high_confidence_events += 1
-                    event_name = (
-                        f"event_{event_count:04d}_id_{person.track_id}_"
-                        f"raw_{person.source_track_id}_"
-                        f"{person.vote.trigger_mode or 'event'}_t_{timestamp:.2f}.jpg"
+                inference_ms = (perf_counter() - inference_started) * 1000
+                durations.append(inference_ms)
+                crop_counts.append(int(result.diagnostics.get("helmet_crops", 0)))
+                for person in result.persons:
+                    canonical_tracks.add(person.track_id)
+                    raw_tracks.add(person.source_track_id)
+                frames_with_people += int(bool(result.persons))
+                frames_with_riders += int(any(person.rider_eligible for person in result.persons))
+                no_helmet_observation_frames += int(
+                    any(
+                        person.rider_eligible and person.state is HelmetState.NO_HELMET
+                        for person in result.persons
                     )
-                    event_path = events_directory / event_name
-                    if not cv2.imwrite(str(event_path), annotated):
-                        raise RuntimeError(f"Cannot write event snapshot: {event_path}")
+                )
+                alarm_frames += int(result.alarm)
+                maximum_score = max(maximum_score, result.maximum_no_helmet_score)
 
-            processed_frames += 1
-            frame_index += 1
+                record = result.to_dict()
+                record["frame_index"] = frame_index
+                record["processing_ms"] = round(inference_ms, 3)
+                records_file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    capture.release()
-    writer.release()
+                annotated = None
+                if writer is not None or result.event_count:
+                    annotated = annotate_dynamic_frame(
+                        frame, result, config=pipeline.config, show_contexts=show_contexts,
+                    )
+                if writer is not None:
+                    writer.write(annotated)
+                for person in result.persons:
+                    if person.event_triggered:
+                        event_count += 1
+                        if person.vote.trigger_mode == "high_confidence":
+                            high_confidence_events += 1
+                        event_name = (
+                            f"event_{event_count:04d}_id_{person.track_id}_"
+                            f"raw_{person.source_track_id}_"
+                            f"{person.vote.trigger_mode or 'event'}_t_{timestamp:.2f}.jpg"
+                        )
+                        event_path = events_directory / event_name
+                        if not cv2.imwrite(str(event_path), annotated):
+                            raise RuntimeError(f"Cannot write event snapshot: {event_path}")
+
+                if processed_frames % 25 == 0:
+                    records_file.flush()
+                processed_frames += 1
+                frame_index += 1
+
+    finally:
+        capture.release()
+        if writer is not None:
+            writer.release()
     return DynamicVideoSummary(
         source_fps=source_fps,
         output_fps=output_fps,
@@ -184,4 +212,8 @@ def process_dynamic_video(
         output_path=str(output_path),
         records_path=str(records_path),
         events_directory=str(events_directory),
+        elapsed_seconds=perf_counter() - begun,
+        pipeline_p95_ms=float(np.percentile(durations, 95)) if durations else 0.0,
+        mean_helmet_crops=float(np.mean(crop_counts)) if crop_counts else 0.0,
+        annotated_video_written=save_video,
     )

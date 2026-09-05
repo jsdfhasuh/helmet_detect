@@ -62,6 +62,7 @@ class SceneModelConfig:
     minimum_person_confidence: float = 0.08
     minimum_person_height: int = 55
     maximum_persons: int = 8
+    preserve_untracked_detections: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], base_dir: Path) -> SceneModelConfig:
@@ -90,6 +91,7 @@ class SceneModelConfig:
             ),
             minimum_person_height=minimum_person_height,
             maximum_persons=maximum_persons,
+            preserve_untracked_detections=bool(data.get("preserve_untracked_detections", True)),
         )
 
     @property
@@ -331,11 +333,15 @@ class TrackTemporalConfig:
     maximum_track_age_seconds: float = 4.0
     helmet_rearm_hits: int = 3
     one_event_per_track_session: bool = True
+    observation_ttl_seconds: float = 1.5
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> TrackTemporalConfig:
         data = data or {}
         result = cls(
+            observation_ttl_seconds=_positive(
+                data.get("observation_ttl_seconds", 1.5), "temporal.observation_ttl_seconds"
+            ),
             window=int(data.get("window", 8)),
             minimum_no_helmet_hits=int(data.get("minimum_no_helmet_hits", 3)),
             minimum_valid_observations=int(data.get("minimum_valid_observations", 3)),
@@ -376,6 +382,35 @@ class TrackTemporalConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class EarlyCheckConfig:
+    """Bounded head observations before vehicle confirmation; never bypass rider gating."""
+
+    enabled: bool = False
+    probe_seconds: float = 2.0
+    interval_seconds: float = 0.2
+    maximum_pending_people: int = 2
+    conflict_margin: float = 0.10
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> EarlyCheckConfig:
+        data = data or {}
+        count = int(data.get("maximum_pending_people", 2))
+        if count < 1:
+            raise ValueError("early_check.maximum_pending_people must be positive")
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            probe_seconds=_positive(data.get("probe_seconds", 2), "early_check.probe_seconds"),
+            interval_seconds=_positive(
+                data.get("interval_seconds", 0.2), "early_check.interval_seconds"
+            ),
+            maximum_pending_people=count,
+            conflict_margin=_probability(
+                data.get("conflict_margin", 0.10), "early_check.conflict_margin"
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DynamicDetectorConfig:
     """Top-level dynamic V2 configuration."""
 
@@ -386,6 +421,7 @@ class DynamicDetectorConfig:
     temporal: TrackTemporalConfig = TrackTemporalConfig()
     alarm_zone: tuple[tuple[float, float], ...] | None = None
     draw_scene_objects: bool = True
+    early_check: EarlyCheckConfig = EarlyCheckConfig()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], base_dir: Path) -> DynamicDetectorConfig:
@@ -409,6 +445,7 @@ class DynamicDetectorConfig:
             temporal=TrackTemporalConfig.from_dict(data.get("temporal")),
             alarm_zone=zone,
             draw_scene_objects=bool(data.get("draw_scene_objects", True)),
+            early_check=EarlyCheckConfig.from_dict(data.get("early_check")),
         )
 
 
