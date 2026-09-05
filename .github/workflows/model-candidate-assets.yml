@@ -22,6 +22,8 @@ jobs:
           echo '51a135396230b6154fc0edc3226b933bbe7a4f2b6c239e0aeb78254b1eebabd2  candidates/hardhat_s.pt' | sha256sum --check
           curl --fail --location --retry 3 --max-time 180 https://huggingface.co/vivekvar/helmet-v5/resolve/main/models/helmet_head_v2.pt -o candidates/helmet_head_v2.pt
           curl --fail --location --retry 3 --max-time 120 https://huggingface.co/vivekvar/helmet-v5/resolve/main/tools/train_head_classifier.py -o candidates/train_head_classifier.reference.txt
+          echo '6066036baf4906f83642dbbcf5f99fbf37d75bd30128d9dbcaf3ca338363f77b  candidates/helmet_head_v2.pt' | sha256sum --check
+          curl --fail --location --retry 3 --max-time 180 https://huggingface.co/vivekvar/helmet-v5/resolve/main/models/yolo11l_cctv_ft.pt -o candidates/yolo11l_cctv_ft.pt
           sha256sum candidates/* > candidates/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
