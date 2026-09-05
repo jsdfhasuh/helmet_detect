@@ -1,0 +1,74 @@
+name: Apply verified early-detection repair
+on:
+  push:
+    branches: [fix/early-helmet-inference]
+    paths: [.github/workflows/apply-early-repair.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: apply-early-repair
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/fix/early-helmet-inference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/early-helmet-inference
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify and apply source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64
+          import gzip
+          import hashlib
+          from pathlib import Path
+          parts = sorted(Path('.github/repair-transfer').glob('part*.b64'))
+          assert len(parts) == 4, 'Expected exactly four transfer chunks'
+          encoded = ''.join(''.join(p.read_text().split()) for p in parts)
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          expected = 'ac45bf65dc01b43e6cd76378bbc6225505a12814f712f2fc4e1b85ac29200c72'
+          actual = hashlib.sha256(patch).hexdigest()
+          assert actual == expected, (actual, expected)
+          Path('/tmp/early-repair.patch').write_bytes(patch)
+          print('Verified source patch:', actual)
+          PY
+          git apply --check --index /tmp/early-repair.patch
+          git apply --index /tmp/early-repair.patch
+      - name: Install test dependencies
+        run: python -m pip install -e '.[runtime,dev]'
+      - name: Lint and unit tests
+        run: |
+          ruff check --fix .
+          ruff check .
+          python -m compileall -q src scripts tests
+          python -m pytest -q
+      - name: Commit verified source on repair branch only
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add configs docs scripts src tests
+          git commit -m 'fix: preserve early detections, gate events not evidence, and measure latency'
+          git push origin HEAD:refs/heads/fix/early-helmet-inference
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+          printf '\nCamera early-entry acceptance remains FAILED; see docs/EARLY_DETECTION_REPAIR.md.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Export source for verification
+        if: success()
+        run: |
+          mkdir -p /tmp/repaired-source
+          git archive HEAD | tar -x -C /tmp/repaired-source
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: early-repair-verified-source
+          path: /tmp/repaired-source/
+          include-hidden-files: true
+          retention-days: 3
