@@ -43,7 +43,7 @@ def annotate_dynamic_frame(
 
         if not observation.rider_eligible:
             colour = (130, 130, 130)
-            status = "NON-RIDER"
+            status = "RIDER-PENDING" if observation.helmet_evaluated else "NOT-EVALUATED"
         elif observation.state is HelmetState.NO_HELMET:
             colour = (0, 0, 255)
             status = "NO-HELMET"
@@ -79,7 +79,14 @@ def annotate_dynamic_frame(
             )
 
         for detection in observation.head_detections:
-            if detection.class_id == config.helmet_model.no_helmet_class_id:
+            threshold = (config.helmet_model.no_helmet_threshold
+                         if detection.class_id == config.helmet_model.no_helmet_class_id
+                         else config.helmet_model.helmet_threshold)
+            if detection.confidence < threshold:
+                continue
+            if observation.state is HelmetState.UNKNOWN or not observation.rider_eligible:
+                head_colour = (160, 160, 160)
+            elif detection.class_id == config.helmet_model.no_helmet_class_id:
                 head_colour = (0, 0, 255)
             else:
                 head_colour = (0, 210, 0)

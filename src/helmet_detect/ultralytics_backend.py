@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any, Protocol
 
 import numpy as np
@@ -55,6 +56,18 @@ class UltralyticsSceneDetector:
             ) from exc
         self.config = config
         self._model = YOLO(str(config.path))
+        self._tracker = None
+
+    def reset(self) -> None:
+        if self._tracker is not None:
+            self._tracker.reset()
+        predictor = getattr(self._model, "predictor", None)
+        for tracker in getattr(predictor, "trackers", ()):
+            tracker.reset()
+
+    @property
+    def device(self) -> str:
+        return str(getattr(self._model, "device", "unknown"))
 
     def detect(self, frame: np.ndarray, *, persist: bool) -> list[SceneObject]:
         arguments: dict[str, object] = {
@@ -68,7 +81,8 @@ class UltralyticsSceneDetector:
         }
         if self.config.device is not None:
             arguments["device"] = self.config.device
-        if persist:
+        raw_mode = self.config.preserve_untracked_detections
+        if persist and not raw_mode:
             arguments.update(
                 {
                     "persist": True,
@@ -82,8 +96,22 @@ class UltralyticsSceneDetector:
             return []
         result = results[0]
         boxes = result.boxes
-        if boxes is None or len(boxes) == 0:
+        if boxes is None:
             return []
+        tracks = np.empty((0, 8), dtype=np.float32)
+        if persist and raw_mode:
+            if self._tracker is None:
+                from ultralytics.trackers.track import TRACKER_MAP
+                from ultralytics.utils import YAML, IterableSimpleNamespace
+                from ultralytics.utils.checks import check_yaml
+
+                tracker_config = IterableSimpleNamespace(
+                    **YAML.load(check_yaml(self.config.tracker))
+                )
+                if tracker_config.tracker_type != "bytetrack":
+                    raise ValueError("Raw-preserving mode currently requires ByteTrack")
+                self._tracker = TRACKER_MAP["bytetrack"](args=tracker_config)
+            tracks = self._tracker.update(boxes.cpu().numpy(), frame)
 
         coordinates = _numpy(boxes.xyxy)
         confidences = _numpy(boxes.conf).reshape(-1)
@@ -115,7 +143,35 @@ class UltralyticsSceneDetector:
                     track_id=track_id,
                 )
             )
+        if persist and raw_mode:
+            # Index mapping comes from the tracker, not nearest-neighbour guessing.
+            id_by_index = track_ids_from_rows(tracks, classes)
+            # Every decoded raw box survives even without a confirmed track.
+            # Clamping may remove invalid boxes, so recompute the retained indices.
+            valid_indices = []
+            for index, xyxy in enumerate(coordinates):
+                x1, y1, x2, y2 = (int(round(float(v))) for v in xyxy)
+                if Rect(x1, y1, max(x1 + 1, x2), max(y1 + 1, y2)).clamp(
+                    frame_width, frame_height
+                ) is not None:
+                    valid_indices.append(index)
+            detections = [
+                replace(obj, track_id=id_by_index.get(index))
+                for obj, index in zip(detections, valid_indices, strict=True)
+            ]
         return detections
+
+
+def track_ids_from_rows(tracks: np.ndarray, classes: np.ndarray) -> dict[int, int]:
+    """Map ByteTrack output [xyxy,id,score,class,source_index] to raw detections."""
+    mapping: dict[int, int] = {}
+    for row in tracks:
+        if len(row) < 8 or not np.all(np.isfinite(row)):
+            continue
+        index = int(row[-1])
+        if 0 <= index < len(classes) and int(row[6]) == int(classes[index]):
+            mapping[index] = int(row[4])
+    return mapping
 
 
 class UltralyticsHelmetDetector:
@@ -135,6 +191,10 @@ class UltralyticsHelmetDetector:
             ) from exc
         self.config = config
         self._model = YOLO(str(config.path))
+
+    @property
+    def device(self) -> str:
+        return str(getattr(self._model, "device", "unknown"))
 
     def detect_batch(self, crops: Sequence[np.ndarray]) -> list[list[Detection]]:
         if not crops:

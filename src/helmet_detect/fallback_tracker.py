@@ -30,7 +30,8 @@ class GreedyPersonTracker:
         timestamp_seconds: float,
     ) -> list[SceneObject]:
         self._prune(timestamp_seconds)
-        available = set(self._tracks)
+        reserved = {p.track_id for p in people if p.track_id is not None}
+        available = set(self._tracks) - reserved
         output: list[SceneObject] = []
         for person in people:
             if person.track_id is not None:

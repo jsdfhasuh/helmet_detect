@@ -13,6 +13,7 @@ from .dynamic_types import HelmetState, TrackVote
 class _Observation:
     state: HelmetState
     no_helmet_score: float
+    timestamp_seconds: float
 
 
 @dataclass(slots=True)
@@ -50,11 +51,18 @@ class PerTrackTemporalAlarm:
         *,
         no_helmet_score: float = 0.0,
         high_confidence_threshold: float = 1.0,
+        allow_event: bool = True,
     ) -> TrackVote:
         history = self._histories.get(track_id)
         if history is None:
             history = _History(observations=deque(maxlen=self.config.window))
             self._histories[track_id] = history
+
+        while history.observations and (
+            timestamp_seconds - history.observations[0].timestamp_seconds
+            > self.config.observation_ttl_seconds
+        ):
+            history.observations.popleft()
 
         if state is HelmetState.HELMET:
             history.helmet_streak += 1
@@ -76,6 +84,7 @@ class PerTrackTemporalAlarm:
         observation = _Observation(
             state=state,
             no_helmet_score=float(no_helmet_score),
+            timestamp_seconds=timestamp_seconds,
         )
         history.observations.append(observation)
         history.last_seen_time = timestamp_seconds
@@ -109,7 +118,9 @@ class PerTrackTemporalAlarm:
 
         event_triggered = False
         event_suppressed = False
-        entering_alarm = qualifies and not history.active
+        # HELMET contradicts a cached NO_HELMET hit: never fire a stale alert.
+        actionable = qualifies and allow_event and state is not HelmetState.HELMET
+        entering_alarm = actionable and not history.active
         if entering_alarm:
             blocked_by_session = (
                 self.config.one_event_per_track_session and history.event_sent
@@ -125,14 +136,14 @@ class PerTrackTemporalAlarm:
                 history.event_sent = True
                 history.last_event_time = timestamp_seconds
 
-        history.active = qualifies
+        history.active = actionable
         self.prune(timestamp_seconds)
         return TrackVote(
             hit_count=hit_count,
             high_confidence_hit_count=high_hit_count,
             valid_observations=len(valid),
             window_size=len(history.observations),
-            active=qualifies,
+            active=actionable,
             event_triggered=event_triggered,
             event_suppressed=event_suppressed,
             trigger_mode=trigger_mode,
