@@ -1,2 +1,0 @@
-[console_scripts]
-helmet-detect = helmet_detect.cli:main
